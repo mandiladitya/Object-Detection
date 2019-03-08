@@ -1,0 +1,53 @@
+import cv2
+import numpy as np
+import requests
+import os
+import serial                                 
+
+Arduino_Serial = serial.Serial('com15',9600)  
+print Arduino_Serial.readline()
+MIN_MATCH_COUNT=30
+
+detector=cv2.SURF()
+
+FLANN_INDEX_KDITREE=0
+flannParam=dict(algorithm=FLANN_INDEX_KDITREE,tree=5)
+flann=cv2.FlannBasedMatcher(flannParam,{})
+
+trainImg=cv2.imread("C:/Python27/ObjectDetector/Training.jpg",0)
+trainKP,trainDesc=detector.detectAndCompute(trainImg,None)
+
+font = cv2.cv.InitFont(cv2.cv.CV_FONT_HERSHEY_SIMPLEX,1,1,0,1,1) 
+while True:
+    req = requests.get('http://192.168.43.1:8080/shot.jpg')
+    arr = np.asarray(bytearray(req.content), dtype=np.uint8)
+    img = cv2.imdecode(arr, -1) # 'Load it as it is'
+    QueryImg = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
+    queryKP,queryDesc=detector.detectAndCompute(QueryImg,None)
+    matches=flann.knnMatch(queryDesc,trainDesc,k=2)
+
+    goodMatch=[]
+    for m,n in matches:
+        if(m.distance<0.75*n.distance):
+            goodMatch.append(m)
+    if(len(goodMatch)>MIN_MATCH_COUNT):
+        tp=[]
+        qp=[]
+        Arduino_Serial.write('1')             #send 1 to arduino
+            #print ("LED ON")
+        for m in goodMatch:
+            tp.append(trainKP[m.trainIdx].pt)
+            qp.append(queryKP[m.queryIdx].pt)
+        tp,qp=np.float32((tp,qp))
+        H,status=cv2.findHomography(tp,qp,cv2.RANSAC,3.0)
+        h,w=trainImg.shape
+        trainBorder=np.float32([[[0,0],[0,h-1],[w-1,h-1],[w-1,0]]])
+        queryBorder=cv2.perspectiveTransform(trainBorder,H)
+        cv2.polylines(img,[np.int32(queryBorder)],True,(255,255,0),5)
+      
+    else:               
+        Arduino_Serial.write('0')            
+    cv2.imshow('result',img)
+    if cv2.waitKey(10)==ord('q'):
+        break
+cv2.destroyAllWindows()
